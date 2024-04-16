@@ -1,19 +1,68 @@
 const express = require('express')
 
-const socketConnection = require("./socket-connection")
+const net = require('net')
 
-const app = express()
+const app = net.createServer()
+
 const port = 8080
 
-app.get('/', (req, res) => {
-    let targetHost = req.headers.host
-    req.headers.connection = ""
-    req.headers["X-Forwarded-For"] = '127.0.0.1'
-    console.log(`Request received!!\n Target: ${targetHost}\n Client: 127.0.0.1`)
-    socketClient = socketConnection.createSocketConnection(targetHost)
-    res.send(socketConnection)
+app.on("connection", (clientToProxySocket) => {
+    console.log("client connected to Proxy")
+    clientToProxySocket.once("data", (data) => {
+        let isConnectionTLS = data.toString().indexOf("CONNECT") !== -1;
+        let serverPort = 80;
+        let serverAddress;
+
+        if (isConnectionTLS) {
+            serverPort = 433
+            serverAddress = data
+                .toString()
+                .split("CONNECT")[1]
+                .split(" ")[1]
+                .split(":")[0];
+        } else {
+            serverAddress = data
+                .toString()
+                .split("Host: ")[1]
+                .split("\\n")[0];
+        }
+        
+        let proxyToServerSocket = net.createConnection(
+            {
+                host: serverAddress,
+                port: serverPort,
+            }, 
+            () => {
+                console.log("Proxy connected to server")
+            }
+        );
+
+    if (isConnectionTLS) {
+        clientToProxySocket.write("HTTP/1.1 200 OK\\r\\n\\n")
+    } else {
+        proxyToServerSocket.write(data)
+    }
+
+    clientToProxySocket.pipe(proxyToServerSocket)
+    proxyToServerSocket.pipe(clientToProxySocket)
+
+    proxyToServerSocket.on("error", (err) => {
+        console.log("Proxy to server error")
+        console.log(err)
+    })
+
+    clientToProxySocket.on("error", (err) => {
+        console.log("Client to proxy error")
+        console.log(err)
+    })
+
+    app.on("close", () => {
+        console.log("Connection is closed")
+        });
+    })
 })
 
-app.listen(port, () => {
-    console.log(`HTTP Proxy listening on port 127.0.0.1:${port}`)
+
+app.listen({ host: "0.0.0.0", port: port }, () => {
+    console.log(`HTTP Proxy running on PORT: ${port}`)
 })
